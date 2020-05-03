@@ -35,6 +35,7 @@ package net.degoes
  * static data or formula computed from other cells.
  */
 object spreadsheet {
+
   trait Spreadsheet {
     def cols: Int
     def rows: Int
@@ -65,6 +66,7 @@ object spreadsheet {
   final case class Cell(col: Int, row: Int, contents: CellContents)
 
   sealed trait CellContents
+
   object CellContents {
     final case class Error(message: String) extends CellContents
     final case class Str(value: String)     extends CellContents
@@ -76,7 +78,7 @@ object spreadsheet {
      * Design a subtype of `CellContents` called `CalculatedValue`, which
      * represents a value that is dynamically computed from a spreadsheet.
      */
-    final case class CalculatedValue() extends CellContents { self =>
+    final case class CalculatedValue(evaluate: Spreadsheet => CellContents) extends CellContents { self =>
 
       /**
        * EXERCISE 2
@@ -84,7 +86,13 @@ object spreadsheet {
        * Add some operators to transform one `CalculatedValue` into another `CalculatedValue`. For
        * example, one operator could "negate" a double expression.
        */
-      def negate: CalculatedValue = ???
+      def negate: CalculatedValue = CalculatedValue {
+        ss =>
+          self.evaluate(ss) match {
+            case Dbl(value) => Dbl(-value)
+            case _ => Error("can not negate . error")
+          }
+      }
 
       /**
        * EXERCISE 3
@@ -92,8 +100,20 @@ object spreadsheet {
        * Add some operators to combine `CalculatedValue`. For example, one operator
        * could sum two double expressions.
        */
-      def sum(that: CalculatedValue): CalculatedValue = ???
+      def sum(that: CalculatedValue): CalculatedValue = CalculatedValue(
+        ss => {
+          val l = self.evaluate(ss)
+          val r = that.evaluate(ss)
+
+          (l, r) match {
+            case (Dbl(v1), Dbl(v2)) => Dbl(v1 + v2)
+            case _ => Error("Error. Required Numeric value")
+          }
+        }
+      )
     }
+
+
     object CalculatedValue {
 
       /**
@@ -139,7 +159,13 @@ object etl {
    * your business requires you to extract data from (and load data to) FTP sites,
    * URLs, AWS S3 buckets, and databases described by JDBC connection strings.
    */
-  type DataRepo
+  sealed trait DataRepo
+  object DataRepo {
+    case class URL(url: String) extends DataRepo
+    case class FTP(url: String) extends DataRepo
+    case class S3(bucketId: String) extends DataRepo
+    case class JDBC(connectionString: String) extends DataRepo
+  }
 
   /**
    * EXERCISE 2
@@ -147,7 +173,13 @@ object etl {
    * Design a data type that models the type of primitives the ETL pipeline
    * has access to. This will include string, numeric, and date/time data.
    */
-  type DataType
+
+  sealed trait DataType
+  object DataType {
+    final case object Str extends DataType
+    final case object Num extends DataType
+    final case object DateTime extends DataType
+  }
 
   /**
    * EXERCISE 3
@@ -157,6 +189,11 @@ object etl {
    */
   sealed trait DataValue {
     def dataType: DataType
+  }
+
+  object DataValue {
+    abstract class AbstractDataValue(val dataType: DataType) extends DataValue
+    case class Str(v: String) extends AbstractDataValue(DataType.Str)
   }
 
   /**
@@ -174,10 +211,10 @@ object etl {
     /**
      * EXERCISE 4
      *
-     * Add a `merge` operator that models the merge of the output of this
-     * pipeline with the output of the specified pipeline.
+     * Add a `+` operator that models sequentially applying this pipeline, and
+     * then the specified pipeline.
      */
-    def merge(that: Pipeline): Pipeline = ???
+    def +(that: Pipeline): Pipeline = Pipeline.Sequential(self, that)
 
     /**
      * EXERCISE 5
@@ -185,45 +222,50 @@ object etl {
      * Add an `orElse` operator that models applying this pipeline, but if it
      * fails, switching over and trying another pipeline.
      */
-    def orElse(that: Pipeline): Pipeline = ???
+    def orElse(that: Pipeline): Pipeline = Pipeline.Fallback(self, that)
 
     /**
      * EXERCISE 6
      *
      * Add an operator to rename a column in a pipeline.
      */
-    def rename(oldName: String, newName: String): Pipeline = ???
+    def rename(oldName: String, newName: String): Pipeline = Pipeline.Rename(self, oldName, newName)
 
     /**
      * EXERCISE 7
      *
      * Add an operator to coerce a column into a specific type in a pipeline.
      */
-    def coerce(column: String, newType: DataType): Pipeline = ???
+    def coerce(column: String, newType: DataType): Pipeline = Pipeline.Coerce(self, column, newType)
 
     /**
      * EXERCISE 8
      *
      * Add an operator to delete a column in a pipeline.
      */
-    def delete(column: String): Pipeline = ???
+    def delete(column: String): Pipeline = Pipeline.Delete(self, column)
 
     /**
      * EXERCISE 9
      *
      * To replace nulls in the specified column with a specified value.
      */
-    def replaceNulls(column: String, defaultValue: DataValue): Pipeline = ???
-  }
-  object Pipeline {
+    def replaceNulls(column: String, defaultValue: DataValue): Pipeline = Pipeline.ReplaceNulls(self, column, defaultValue)
 
-    /**
-     * EXERCISE 10
-     *
-     * Add a constructor for `Pipeline` that models extraction of data from
-     * the specified data repository.
-     */
-    def extract(repo: DataRepo): Pipeline = ???
+    def loadInto(repo: DataRepo): Pipeline = Pipeline.Load(self, repo)
+  }
+
+  object Pipeline {
+    def extract(repo: DataRepo): Pipeline = Extract(repo)
+
+    final case class Extract(dataRepo: DataRepo) extends Pipeline
+    final case class Sequential(first: Pipeline, second: Pipeline) extends Pipeline
+    final case class Fallback(first: Pipeline, second: Pipeline) extends Pipeline
+    final case class Rename(pipeline: Pipeline, oldName: String, newName: String) extends Pipeline
+    final case class Coerce(pipeline: Pipeline, name: String, newType: DataType) extends Pipeline
+    final case class Delete(pipeline: Pipeline, column: String) extends Pipeline
+    final case class ReplaceNulls(pipeline: Pipeline, column: String, defaultValue: DataValue) extends Pipeline
+    final case class Load(pipeline: Pipeline, repo: DataRepo) extends Pipeline
   }
 
   /**
@@ -234,7 +276,9 @@ object etl {
    * into a column "first_name", and which coerces the "age" column into an
    * integer type.
    */
-  lazy val pipeline: Pipeline = ???
+  lazy val pipeline: Pipeline = Pipeline
+    .extract(DataRepo.URL("test"))
+    .replaceNulls("age", DataValue.Str("0"))
 }
 
 /**
@@ -254,7 +298,7 @@ object analytics {
    * For efficiency, the page should be stored inside an `Array[Double]`, but
    * not exposed outside the data type.
    */
-  final case class ColumnarPage() { self =>
+  final case class ColumnarPage(private val array: Array[Double]) { self =>
 
     /**
      * EXERCISE 2
@@ -272,7 +316,11 @@ object analytics {
      * one page is shorter than the other, then use "wraparound" semantics for
      * the smaller page.
      */
-    def +(that: ColumnarPage): ColumnarPage = ???
+    def +(that: ColumnarPage): ColumnarPage = ColumnarPage(
+      array.zip(that.array).map {
+        case (l,r) => l + r
+      }
+    )
 
     /**
      * EXERCISE 4
@@ -282,7 +330,11 @@ object analytics {
      * pairwise. If one page is shorter than the other, then use "wraparound"
      * semantics for the smaller page.
      */
-    def *(that: ColumnarPage): ColumnarPage = ???
+    def *(that: ColumnarPage): ColumnarPage = ColumnarPage(
+      array.zip(that.array).map {
+        case (l,r) => l * r
+      }
+    )
 
     /**
      * EXERCISE 5
@@ -299,7 +351,9 @@ object analytics {
      * Add a `reduce` operation that reduces the entire page down to a page
      * with only a single entry by using the user-specified combining function.
      */
-    def reduce(f: (Double, Double) => Double): ColumnarPage = ???
+    def reduce(f: (Double, Double) => Double): ColumnarPage = {
+      (array.reduceOption(f) orElse array.headOption).map(ColumnarPage(_)).getOrElse(ColumnarPage())
+    }
   }
   object ColumnarPage {
 
@@ -326,14 +380,23 @@ object pricing_fetcher {
   def fetch(directory: java.io.File, url: java.net.URL, schedule: Schedule): Unit = ???
 
   sealed trait DayOfWeek
+
   object DayOfWeek {
-    case object Sunday    extends DayOfWeek
-    case object Monday    extends DayOfWeek
-    case object Tuesday   extends DayOfWeek
+
+    case object Sunday extends DayOfWeek
+
+    case object Monday extends DayOfWeek
+
+    case object Tuesday extends DayOfWeek
+
     case object Wednesday extends DayOfWeek
-    case object Thursday  extends DayOfWeek
-    case object Friday    extends DayOfWeek
-    case object Saturday  extends DayOfWeek
+
+    case object Thursday extends DayOfWeek
+
+    case object Friday extends DayOfWeek
+
+    case object Saturday extends DayOfWeek
+
   }
 
   /**
@@ -377,6 +440,7 @@ object pricing_fetcher {
      */
     def times(times: Int): Schedule = ???
   }
+
   object Schedule {
 
     /**
@@ -385,7 +449,7 @@ object pricing_fetcher {
      * Create a constructor for Schedule that models fetching on specific weeks
      * of the month.
      */
-    def weeks(weeks: Int*): Schedule = ???
+    def weeks(weeks: Int*): Schedule = Weeks(weeks)
 
     /**
      * EXERCISE 6
@@ -393,13 +457,13 @@ object pricing_fetcher {
      * Create a constructor for Schedule that models fetching on specific days
      * of the week.
      */
-    def daysOfTheWeek(daysOfTheWeek: Int*): Schedule = ???
+    def daysOfTheWeek(daysOfTheWeek: Int*): Schedule = DaysOfTheWeek(daysOfTheWeek)
 
     /** EXERCISE 7
      *
      * Create a constructor for Schedule that models fetching on specific hours.
      */
-    def hours(hours: Int*): Schedule = ???
+    def hours(hours: Int*): Schedule = Hours(hours)
 
     /**
      * EXERCISE 8
@@ -408,13 +472,30 @@ object pricing_fetcher {
      * of the hour.
      */
     def minutes(minutes: Int*): Schedule = ???
+
+    final case class Weeks(weeks: Seq[Int]) extends Schedule
+
+    final case class DaysOfTheWeek(daysOfTheWeek: Seq[Int]) extends Schedule
+
+    final case class Hours(hours: Seq[Int]) extends Schedule
+
+    final case class Union(self: Schedule, that: Schedule) extends Schedule
+
+    final case class Interleve(self: Schedule, that: Schedule) extends Schedule
+
+    final case class Times(self: Schedule, times: Int) extends Schedule
+
+    /**
+     * EXERCISE 9
+     *
+     * Create a schedule that repeats every Wednesday, at 6:00 AM and 12:00 PM,
+     * and at 5:30, 6:30, and 7:30 every Thursday.
+     */
+    lazy val schedule: Schedule = {
+      val wednesday = daysOfTheWeek(4).union(hours(6, 12))
+      val thursday = daysOfTheWeek(5).union(hours(5, 6, 7).union(minutes(30)))
+      wednesday interleave thursday
+    }
   }
 
-  /**
-   * EXERCISE 9
-   *
-   * Create a schedule that repeats every Wednesday, at 6:00 AM and 12:00 PM,
-   * and at 5:30, 6:30, and 7:30 every Thursday.
-   */
-  lazy val schedule: Schedule = ???
 }
