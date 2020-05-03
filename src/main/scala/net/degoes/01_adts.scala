@@ -1,6 +1,6 @@
 package net.degoes
 
-import java.time.Instant
+import java.time.{Instant, LocalDate}
 
 /*
  * INTRODUCTION
@@ -30,7 +30,7 @@ object credit_card {
    *  * Expiration date
    *  * Security code
    */
-  type CreditCard
+  final case class CreditCard(number: Long, name: String, expirationDate: LocalDate, securityCode: Int)
 
   /**
    * EXERCISE 2
@@ -175,6 +175,41 @@ object bank {
  * Consider a web application that allows users to manage their portfolio of investments.
  */
 object portfolio {
+sealed trait Exchange
+object Exchange {
+  case object NASDAQ extends Exchange
+  case object NYSE   extends Exchange
+}
+
+sealed trait CurrencyType
+object CurrencyType {
+  case object USD extends CurrencyType
+  case object EUR extends CurrencyType
+  case object KRW extends CurrencyType
+}
+
+final case class StockSymbol(id: String, exchange: Exchange, currencyType: CurrencyType)
+
+final case class Portfolio(investments: Map[StockSymbol, BigDecimal])
+
+final case class User(id: Long, name: String, portfolio: Portfolio)
+
+sealed trait TradeType
+object TradeType {
+  sealed trait Buy  extends TradeType
+  sealed trait Sell extends TradeType
+}
+
+final case class Trade(
+                        userId: Long,
+                        tradeType: TradeType,
+                        stockSymbol: StockSymbol,
+                        amount: BigDecimal,
+                        price: BigDecimal
+                      )
+}
+
+object portfolio_1 {
 
   /**
    * EXERCISE 1
